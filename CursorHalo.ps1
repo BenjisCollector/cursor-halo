@@ -28,11 +28,63 @@ public class HaloForm : Form {
     }
   }
 }
+public class OverlayForm : Form {
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr h, IntPtr hdcDst, ref Point pDst, ref Size sz, IntPtr hdcSrc, ref Point pSrc, int crKey, ref BLEND b, int flags);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
+  [System.Runtime.InteropServices.DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+  [System.Runtime.InteropServices.DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+  [System.Runtime.InteropServices.DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr o);
+  [System.Runtime.InteropServices.DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
+  [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 1)]
+  struct BLEND { public byte Op, Flags, Alpha, Format; }
+  public static void MakeDpiAware() { try { SetProcessDPIAware(); } catch {} }
+  public OverlayForm() {
+    FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
+    StartPosition = FormStartPosition.Manual; Text = "Cursor Halo Overlay (OBS)";
+  }
+  protected override bool ShowWithoutActivation { get { return true; } }
+  protected override CreateParams CreateParams { get {
+    CreateParams cp = base.CreateParams; cp.ExStyle |= 0x80000 | 0x20 | 0x80 | 0x08000000; return cp; } }
+  public void Cover() { Rectangle v = SystemInformation.VirtualScreen; Bounds = v; }
+  // cx,cy = cursor position in screen coords
+  public void Render(int cx, int cy, Color c, int opacityPct, int size, bool ring, int th, bool drawCursor) {
+    int W = Width, H = Height; if (W < 1 || H < 1) return;
+    Rectangle v = SystemInformation.VirtualScreen;
+    float x = cx - v.X, y = cy - v.Y, r = size / 2f;
+    using (Bitmap bmp = new Bitmap(W, H, System.Drawing.Imaging.PixelFormat.Format32bppArgb)) {
+      using (Graphics g = Graphics.FromImage(bmp)) {
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.Clear(Color.Transparent);
+        Color hc = Color.FromArgb((int)(255 * opacityPct / 100.0), c);
+        if (ring) { using (Pen p = new Pen(hc, th)) g.DrawEllipse(p, x - r + th / 2f, y - r + th / 2f, size - th, size - th); }
+        else { using (Brush b = new SolidBrush(hc)) g.FillEllipse(b, x - r, y - r, size, size); }
+        if (drawCursor) {
+          PointF[] a = { new PointF(x,y), new PointF(x,y+17), new PointF(x+4,y+13), new PointF(x+7,y+20), new PointF(x+10,y+19), new PointF(x+7,y+12), new PointF(x+12,y+12) };
+          g.FillPolygon(Brushes.White, a); g.DrawPolygon(Pens.Black, a);
+        }
+      }
+      IntPtr screenDc = GetDC(IntPtr.Zero), memDc = CreateCompatibleDC(screenDc), hBmp = IntPtr.Zero, old = IntPtr.Zero;
+      try {
+        hBmp = bmp.GetHbitmap(Color.FromArgb(0)); old = SelectObject(memDc, hBmp);
+        Size sz = new Size(W, H); Point src = new Point(0, 0), dst = new Point(Left, Top);
+        BLEND bl = new BLEND(); bl.Op = 0; bl.Flags = 0; bl.Alpha = 255; bl.Format = 1;
+        UpdateLayeredWindow(Handle, screenDc, ref dst, ref sz, memDc, ref src, 0, ref bl, 2);
+      } finally {
+        ReleaseDC(IntPtr.Zero, screenDc);
+        if (hBmp != IntPtr.Zero) { SelectObject(memDc, old); DeleteObject(hBmp); }
+        DeleteDC(memDc);
+      }
+    }
+  }
+}
 "@
+[OverlayForm]::MakeDpiAware()
 
 $cfgDir  = Join-Path $env:APPDATA 'CursorHalo'
 $cfgFile = Join-Path $cfgDir 'settings.json'
-$cfg = @{ Size = 80; Opacity = 40; Thickness = 6; Ring = $false; Enabled = $true; Color = '#FFD400' }
+$cfg = @{ Size = 80; Opacity = 40; Thickness = 6; Ring = $false; Enabled = $true; Color = '#FFD400'; Obs = $false; DrawCursor = $true }
 if (Test-Path $cfgFile) {
   try { $j = Get-Content $cfgFile -Raw | ConvertFrom-Json
         foreach ($k in @($cfg.Keys)) { if ($null -ne $j.$k) { $cfg[$k] = $j.$k } } } catch {}
@@ -41,6 +93,7 @@ function Save-Cfg { New-Item -ItemType Directory -Force $cfgDir | Out-Null
   $cfg | ConvertTo-Json | Set-Content $cfgFile }
 
 $halo = New-Object HaloForm
+$ov = New-Object OverlayForm
 function Apply-Halo {
   $c = [System.Drawing.ColorTranslator]::FromHtml($cfg.Color)
   if ($c.R -eq 255 -and $c.G -eq 0 -and $c.B -eq 254) { $c = [System.Drawing.Color]::FromArgb(255,0,253) }
@@ -48,14 +101,18 @@ function Apply-Halo {
   $s = [int]$cfg.Size; $halo.Size = New-Object System.Drawing.Size($s,$s)
   $halo.Opacity = [double]$cfg.Opacity / 100.0
   $halo.Invalidate()
-  if ($cfg.Enabled) { if (-not $halo.Visible) { $halo.Show() } } else { $halo.Hide() }
+  $showHalo = $cfg.Enabled -and -not $cfg.Obs
+  if ($showHalo) { if (-not $halo.Visible) { $halo.Show() } } else { $halo.Hide() }
+  if ($cfg.Obs) { $ov.Cover(); if (-not $ov.Visible) { $ov.Show() } } else { $ov.Hide() }
+  $script:last = $null
 }
 
 # ---- Settings UI ----
 $ui = New-Object System.Windows.Forms.Form
-$ui.Text = 'Cursor Halo'; $ui.Size = New-Object System.Drawing.Size(360,380)
+$ui.Text = 'Cursor Halo'; $ui.Size = New-Object System.Drawing.Size(360,460)
 $ui.FormBorderStyle = 'FixedDialog'; $ui.MaximizeBox = $false; $ui.StartPosition = 'CenterScreen'
 $ui.BackColor = [System.Drawing.Color]::FromArgb(30,30,34); $ui.ForeColor = [System.Drawing.Color]::White
+try { $ui.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) } catch {}
 $ui.Font = New-Object System.Drawing.Font('Segoe UI',9.5)
 
 function Add-Label($t,$y){ $l = New-Object System.Windows.Forms.Label; $l.Text=$t; $l.Location="20,$y"; $l.AutoSize=$true; $ui.Controls.Add($l); $l }
@@ -75,6 +132,13 @@ $cbRing.Checked=[bool]$cfg.Ring; $ui.Controls.Add($cbRing)
 $cbOn = New-Object System.Windows.Forms.CheckBox; $cbOn.Text='Halo enabled'; $cbOn.Location='180,230'; $cbOn.AutoSize=$true
 $cbOn.Checked=[bool]$cfg.Enabled; $ui.Controls.Add($cbOn)
 
+$cbObs = New-Object System.Windows.Forms.CheckBox; $cbObs.Text='OBS mode: show halo in Window Capture'; $cbObs.Location='20,320'; $cbObs.AutoSize=$true
+$cbObs.Checked=[bool]$cfg.Obs; $ui.Controls.Add($cbObs)
+$cbCur = New-Object System.Windows.Forms.CheckBox; $cbCur.Text='Draw cursor arrow in overlay'; $cbCur.Location='20,348'; $cbCur.AutoSize=$true
+$cbCur.Checked=[bool]$cfg.DrawCursor; $ui.Controls.Add($cbCur)
+$hint = New-Object System.Windows.Forms.Label; $hint.Location='20,376'; $hint.Size='320,40'; $hint.ForeColor=[System.Drawing.Color]::Silver
+$hint.Text='OBS: Add source > Window Capture > "Cursor Halo Overlay (OBS)" (Windows 10 1903+ method), place it above your video.'
+$ui.Controls.Add($hint)
 $btnColor = New-Object System.Windows.Forms.Button; $btnColor.Text='Pick colour...'; $btnColor.Location='20,270'; $btnColor.Size='130,32'
 $btnColor.FlatStyle='Flat'; $ui.Controls.Add($btnColor)
 $sw = New-Object System.Windows.Forms.Panel; $sw.Location='160,270'; $sw.Size='32,32'; $sw.BorderStyle='FixedSingle'
@@ -93,6 +157,8 @@ $tbOp.Add_ValueChanged({ $cfg.Opacity=$tbOp.Value; $lblOp.Text="Opacity: $($tbOp
 $tbTh.Add_ValueChanged({ $cfg.Thickness=$tbTh.Value; $lblTh.Text="Ring thickness: $($tbTh.Value) px"; Apply-Halo; Save-Cfg })
 $cbRing.Add_CheckedChanged({ $cfg.Ring=$cbRing.Checked; Apply-Halo; Save-Cfg })
 $cbOn.Add_CheckedChanged({ $cfg.Enabled=$cbOn.Checked; Apply-Halo; Save-Cfg })
+$cbObs.Add_CheckedChanged({ $cfg.Obs=$cbObs.Checked; Apply-Halo; Save-Cfg })
+$cbCur.Add_CheckedChanged({ $cfg.DrawCursor=$cbCur.Checked; $script:last=$null; Save-Cfg })
 $btnColor.Add_Click({
   $d = New-Object System.Windows.Forms.ColorDialog; $d.FullOpen=$true; $d.Color=$sw.BackColor
   if ($d.ShowDialog() -eq 'OK') { $c=$d.Color
@@ -100,12 +166,20 @@ $btnColor.Add_Click({
 
 # ---- Follow cursor ----
 $timer = New-Object System.Windows.Forms.Timer; $timer.Interval = 8
+$script:last = $null
 $timer.Add_Tick({
+  $p = [System.Windows.Forms.Cursor]::Position
+  if ($cfg.Obs) {
+    if ($script:last -ne "$($p.X),$($p.Y)") { $script:last = "$($p.X),$($p.Y)"
+      $c = [System.Drawing.ColorTranslator]::FromHtml($cfg.Color)
+      $ov.Render($p.X,$p.Y,$c,[int]$cfg.Opacity,[int]$cfg.Size,[bool]$cfg.Ring,[int]$cfg.Thickness,[bool]$cfg.DrawCursor) }
+    return
+  }
   if (-not $cfg.Enabled) { return }
-  $p = [System.Windows.Forms.Cursor]::Position; $r = [int]($halo.Width / 2)
+  $r = [int]($halo.Width / 2)
   $halo.Location = New-Object System.Drawing.Point(($p.X - $r), ($p.Y - $r))
 })
-$ui.Add_FormClosing({ $timer.Stop(); $halo.Close() })
+$ui.Add_FormClosing({ $timer.Stop(); $halo.Close(); $ov.Close() })
 
 Apply-Halo; $timer.Start()
 [System.Windows.Forms.Application]::EnableVisualStyles()
