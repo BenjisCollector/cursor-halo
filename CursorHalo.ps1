@@ -41,12 +41,12 @@ public class OverlayForm : Form {
   struct BLEND { public byte Op, Flags, Alpha, Format; }
   public static void MakeDpiAware() { try { SetProcessDPIAware(); } catch {} }
   public OverlayForm() {
-    FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
+    FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = true; TopMost = true;
     StartPosition = FormStartPosition.Manual; Text = "Cursor Halo Overlay (OBS)";
   }
   protected override bool ShowWithoutActivation { get { return true; } }
   protected override CreateParams CreateParams { get {
-    CreateParams cp = base.CreateParams; cp.ExStyle |= 0x80000 | 0x20 | 0x80 | 0x08000000; return cp; } }
+    CreateParams cp = base.CreateParams; cp.ExStyle |= 0x80000 | 0x20 | 0x08000000; cp.ExStyle &= ~0x80; return cp; } } // no TOOLWINDOW: OBS hides those from its window list
   public void Cover() { Rectangle v = SystemInformation.VirtualScreen; Bounds = v; }
   // cx,cy = cursor position in screen coords
   public void Render(int cx, int cy, Color c, int opacityPct, int size, bool ring, int th, bool drawCursor) {
@@ -172,7 +172,7 @@ $timer.Add_Tick({
   if ($cfg.Obs) {
     if ($script:last -ne "$($p.X),$($p.Y)") { $script:last = "$($p.X),$($p.Y)"
       $c = [System.Drawing.ColorTranslator]::FromHtml($cfg.Color)
-      $ov.Render($p.X,$p.Y,$c,[int]$cfg.Opacity,[int]$cfg.Size,[bool]$cfg.Ring,[int]$cfg.Thickness,[bool]$cfg.DrawCursor) }
+      try { $ov.Render($p.X,$p.Y,$c,[int]$cfg.Opacity,[int]$cfg.Size,[bool]$cfg.Ring,[int]$cfg.Thickness,[bool]$cfg.DrawCursor) } catch { try { New-Item -ItemType Directory -Force $cfgDir | Out-Null; $_ | Out-String | Add-Content (Join-Path $cfgDir 'error.log') } catch {} } }
     return
   }
   if (-not $cfg.Enabled) { return }
