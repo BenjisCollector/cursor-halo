@@ -1,0 +1,30 @@
+name: Build Cursor Halo exe
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build exe
+        shell: powershell
+        run: |
+          Install-Module ps2exe -Scope CurrentUser -Force
+          Invoke-ps2exe -inputFile CursorHalo.ps1 -outputFile CursorHalo.exe -noConsole -STA -title 'Cursor Halo' -version 1.0.0.0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CursorHalo
+          path: CursorHalo.exe
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest CursorHalo.exe --target "$GITHUB_SHA" --title 'Cursor Halo (latest)' --notes 'Download CursorHalo.exe and double-click to run.'
