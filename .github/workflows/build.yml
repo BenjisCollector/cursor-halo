@@ -19,7 +19,8 @@ jobs:
           $t = Get-Content CursorHalo.ps1 -Raw
           $m = [regex]::Match($t, '(?s)-TypeDefinition @"\r?\n(.*?)\r?\n"@')
           Add-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition $m.Groups[1].Value
-          $null = [System.Management.Automation.Language.Parser]::ParseFile("$PWD/CursorHalo.ps1",[ref]$null,[ref]$e)
+          $tk = $null; $e = $null
+          $null = [System.Management.Automation.Language.Parser]::ParseFile("$PWD/CursorHalo.ps1",[ref]$tk,[ref]$e)
           if ($e) { $e; exit 1 }
           Write-Host 'C# and PowerShell syntax OK'
       - name: Build exe
