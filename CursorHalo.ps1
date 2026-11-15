@@ -103,13 +103,18 @@ function Apply-Halo {
   $halo.Invalidate()
   $showHalo = $cfg.Enabled -and -not $cfg.Obs
   if ($showHalo) { if (-not $halo.Visible) { $halo.Show() } } else { $halo.Hide() }
-  if ($cfg.Obs) { $ov.Cover(); if (-not $ov.Visible) { $ov.Show() } } else { $ov.Hide() }
+  try {
+    if ($cfg.Obs) { $ov.Cover(); if (-not $ov.Visible) { $ov.Show() }
+      $script:status = "Overlay: ON, $($ov.Width)x$($ov.Height), title '$($ov.Text)'" }
+    else { $ov.Hide(); $script:status = 'Overlay: off' }
+  } catch { $script:status = "Overlay ERROR: $($_.Exception.Message)" }
+  if ($script:lblStatus) { $script:lblStatus.Text = $script:status }
   $script:last = $null
 }
 
 # ---- Settings UI ----
 $ui = New-Object System.Windows.Forms.Form
-$ui.Text = 'Cursor Halo'; $ui.Size = New-Object System.Drawing.Size(360,460)
+$ui.Text = 'Cursor Halo'; $ui.Size = New-Object System.Drawing.Size(360,500)
 $ui.FormBorderStyle = 'FixedDialog'; $ui.MaximizeBox = $false; $ui.StartPosition = 'CenterScreen'
 $ui.BackColor = [System.Drawing.Color]::FromArgb(30,30,34); $ui.ForeColor = [System.Drawing.Color]::White
 try { $ui.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) } catch {}
@@ -139,6 +144,7 @@ $cbCur.Checked=[bool]$cfg.DrawCursor; $ui.Controls.Add($cbCur)
 $hint = New-Object System.Windows.Forms.Label; $hint.Location='20,376'; $hint.Size='320,40'; $hint.ForeColor=[System.Drawing.Color]::Silver
 $hint.Text='OBS: Add source > Window Capture > "Cursor Halo Overlay (OBS)" (Windows 10 1903+ method), place it above your video.'
 $ui.Controls.Add($hint)
+$script:lblStatus = New-Object System.Windows.Forms.Label; $script:lblStatus.Location='20,420'; $script:lblStatus.Size='320,40'; $script:lblStatus.ForeColor=[System.Drawing.Color]::Gold; $script:lblStatus.Text=$script:status; $ui.Controls.Add($script:lblStatus)
 $btnColor = New-Object System.Windows.Forms.Button; $btnColor.Text='Pick colour...'; $btnColor.Location='20,270'; $btnColor.Size='130,32'
 $btnColor.FlatStyle='Flat'; $ui.Controls.Add($btnColor)
 $sw = New-Object System.Windows.Forms.Panel; $sw.Location='160,270'; $sw.Size='32,32'; $sw.BorderStyle='FixedSingle'
@@ -172,7 +178,7 @@ $timer.Add_Tick({
   if ($cfg.Obs) {
     if ($script:last -ne "$($p.X),$($p.Y)") { $script:last = "$($p.X),$($p.Y)"
       $c = [System.Drawing.ColorTranslator]::FromHtml($cfg.Color)
-      try { $ov.Render($p.X,$p.Y,$c,[int]$cfg.Opacity,[int]$cfg.Size,[bool]$cfg.Ring,[int]$cfg.Thickness,[bool]$cfg.DrawCursor) } catch { try { New-Item -ItemType Directory -Force $cfgDir | Out-Null; $_ | Out-String | Add-Content (Join-Path $cfgDir 'error.log') } catch {} } }
+      try { $ov.Render($p.X,$p.Y,$c,[int]$cfg.Opacity,[int]$cfg.Size,[bool]$cfg.Ring,[int]$cfg.Thickness,[bool]$cfg.DrawCursor) } catch { if ($script:lblStatus) { $script:lblStatus.Text = "Render ERROR: $($_.Exception.Message)" }; try { New-Item -ItemType Directory -Force $cfgDir | Out-Null; $_ | Out-String | Add-Content (Join-Path $cfgDir 'error.log') } catch {} } }
     return
   }
   if (-not $cfg.Enabled) { return }
