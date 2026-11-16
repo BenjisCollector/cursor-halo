@@ -1,4 +1,4 @@
-name: Build Cursor Halo exe
+name: Build Cursor Halo (Windows + Mac)
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,10 +32,51 @@ jobs:
         with:
           name: CursorHalo
           path: CursorHalo.exe
+
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build universal app (Apple Silicon + Intel)
+        run: |
+          swiftc -O -target arm64-apple-macos11 macos/CursorHalo.swift -o CursorHalo-arm64
+          swiftc -O -target x86_64-apple-macos11 macos/CursorHalo.swift -o CursorHalo-x86_64
+          APP=dist/CursorHalo.app
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          lipo -create CursorHalo-arm64 CursorHalo-x86_64 -output "$APP/Contents/MacOS/CursorHalo"
+          cp macos/Info.plist "$APP/Contents/Info.plist"
+          mkdir AppIcon.iconset
+          for s in 16 32 64 128 256 512; do sips -z $s $s assets/icon.png --out AppIcon.iconset/icon_${s}x${s}.png >/dev/null; done
+          cp AppIcon.iconset/icon_32x32.png AppIcon.iconset/icon_16x16@2x.png
+          cp AppIcon.iconset/icon_64x64.png AppIcon.iconset/icon_32x32@2x.png
+          cp AppIcon.iconset/icon_256x256.png AppIcon.iconset/icon_128x128@2x.png
+          cp AppIcon.iconset/icon_512x512.png AppIcon.iconset/icon_256x256@2x.png
+          rm AppIcon.iconset/icon_64x64.png
+          iconutil -c icns AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
+          codesign --force --deep -s - "$APP"
+          lipo -info "$APP/Contents/MacOS/CursorHalo"
+          ditto -c -k --keepParent "$APP" CursorHalo-mac.zip
+          ln -s /Applications dist/Applications
+          hdiutil create -volname "Cursor Halo" -srcfolder dist -ov -format UDZO CursorHalo-mac.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CursorHalo-mac
+          path: |
+            CursorHalo-mac.zip
+            CursorHalo-mac.dmg
+
+  release:
+    needs: [windows, mac]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
       - name: Publish release
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete latest --yes --cleanup-tag || true
-          gh release create latest CursorHalo.exe --target "$GITHUB_SHA" --title 'Cursor Halo (latest)' --notes 'Download CursorHalo.exe and double-click to run.'
+          gh release delete latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create latest artifacts/CursorHalo/CursorHalo.exe artifacts/CursorHalo-mac/CursorHalo-mac.dmg artifacts/CursorHalo-mac/CursorHalo-mac.zip \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'Cursor Halo (latest)' \
+            --notes 'Windows: CursorHalo.exe. Mac (Apple Silicon and Intel): CursorHalo-mac.dmg or .zip. Source code is attached below.'
